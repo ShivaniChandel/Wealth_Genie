@@ -1,10 +1,11 @@
-from fastapi import FastAPI, Depends, HTTPException, status, Header
+from fastapi import FastAPI, Depends, HTTPException, status, Header, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from supabase import create_client, Client
-from uuid import UUID
+from uuid import UUID, uuid4
+import os
 
 from app.config import settings
 from app.schemas import (
@@ -13,7 +14,8 @@ from app.schemas import (
     UserLoginRequest,
     UserLoginResponse,
     TokenVerificationResponse,
-    ErrorResponse
+    ErrorResponse,
+    UploadResponse
 )
 from app.auth import get_current_user_id, verify_jwt
 
@@ -151,4 +153,109 @@ def verify_token(user_id: UUID = Depends(get_current_user_id), authorization: st
         email=payload.get("email", ""),
         aud=payload.get("aud", ""),
         role=payload.get("role", "")
+    )
+
+# Startup event to ensure documents storage bucket exists
+@app.on_event("startup")
+async def startup_event():
+    try:
+        supabase_client.storage.get_bucket("documents")
+    except Exception:
+        try:
+            # Create bucket as private
+            supabase_client.storage.create_bucket("documents", {"public": False})
+        except Exception as e:
+            print(f"Warning: Could not create Supabase Storage bucket 'documents': {str(e)}")
+
+# Document upload endpoint
+@app.post(
+    "/api/v1/documents/upload",
+    response_model=UploadResponse,
+    status_code=200,
+    responses={
+        400: {"model": ErrorResponse},
+        401: {"model": ErrorResponse},
+        500: {"model": ErrorResponse}
+    }
+)
+async def upload_document(
+    file: UploadFile = File(...),
+    document_type: str = Form(...),
+    user_id: UUID = Depends(get_current_user_id)
+):
+    # 1. Validate file extension and content type
+    file_ext = os.path.splitext(file.filename)[1].lower() if file.filename else ""
+    if file_ext != ".pdf" or file.content_type != "application/pdf":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only PDF documents are allowed."
+        )
+
+    # 2. Validate document type
+    allowed_types = ["bank_statement", "credit_card", "loan", "salary_slip"]
+    if document_type not in allowed_types:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid document type. Allowed types: {', '.join(allowed_types)}"
+        )
+
+    # 3. Validate file size (max 10MB)
+    try:
+        file.file.seek(0, 2)  # seek to end
+        file_size = file.file.tell()
+        file.file.seek(0)      # reset to beginning
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Could not read file metadata: {str(e)}"
+        )
+
+    max_size = 10 * 1024 * 1024  # 10MB
+    if file_size > max_size:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File size exceeds the maximum limit of 10MB."
+        )
+
+    document_id = uuid4()
+    storage_path = f"documents/{user_id}/{document_id}.pdf"
+
+    # 4. Upload file to Supabase Storage
+    try:
+        file_bytes = await file.read()
+        supabase_client.storage.from_("documents").upload(
+            path=storage_path,
+            file=file_bytes,
+            file_options={"content-type": "application/pdf"}
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to upload file to storage: {str(e)}"
+        )
+
+    # 5. Create database record in 'documents' table
+    try:
+        supabase_client.table("documents").insert({
+            "id": str(document_id),
+            "user_id": str(user_id),
+            "file_name": file.filename,
+            "file_path": storage_path,
+            "document_type": document_type,
+            "status": "uploaded"
+        }).execute()
+    except Exception as e:
+        # Cleanup file from storage if DB insert fails
+        try:
+            supabase_client.storage.from_("documents").remove([storage_path])
+        except Exception:
+            pass
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create document record in database: {str(e)}"
+        )
+
+    return UploadResponse(
+        document_id=document_id,
+        status="uploaded"
     )

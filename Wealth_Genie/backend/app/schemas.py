@@ -31,3 +31,8 @@ class TokenVerificationResponse(BaseModel):
     email: str
     aud: str
     role: str
+
+class UploadResponse(BaseModel):
+    document_id: UUID
+    status: str
+

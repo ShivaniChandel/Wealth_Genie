@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
@@ -154,9 +155,9 @@ export default function DashboardPage() {
             <p className="text-gray-400 text-sm max-w-md mb-8 leading-relaxed">
               Upload bank statements, credit card statements, loan contracts, or salary slips. The Wealth Genie AI agents will analyze them and build your financial profile.
             </p>
-            <button className="px-6 py-3 bg-emerald-500 hover:bg-emerald-600 text-white font-semibold rounded-xl shadow-lg shadow-emerald-500/20 transition-all duration-200">
+            <Link href="/upload" className="px-6 py-3 bg-emerald-500 hover:bg-emerald-600 text-white font-semibold rounded-xl shadow-lg shadow-emerald-500/20 transition-all duration-200">
               Upload First Document
-            </button>
+            </Link>
           </div>
 
           {/* Backend Connection / Token Validation Panel */}
