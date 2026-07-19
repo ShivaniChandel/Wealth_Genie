@@ -9,6 +9,7 @@ OpenRouter proxies many underlying models (Gemini, Llama, Claude, GPT, etc.)
 behind a single OpenAI-compatible API, so the same client works regardless of
 which model string is configured via LLM_MODEL.
 """
+
 from __future__ import annotations
 
 import json
@@ -18,39 +19,9 @@ import openai
 
 from app.config import settings
 from app.services.llm.base import LLMProvider, LLMProviderError
+from app.services.llm.prompts import EXTRACTION_SYSTEM_PROMPT
 
 _OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-
-_EXTRACTION_SYSTEM_PROMPT = """You are a deterministic financial document structuring \
-engine. You convert normalized financial-document text into a single JSON object \
-matching an exact schema. You NEVER invent values that are not present in the source \
-text. Any field you cannot find must be omitted or left as null/empty, never guessed.
-
-Respond with JSON ONLY. No prose, no markdown code fences, no explanations.
-
-Schema (top-level keys, all required, unknown sub-fields may be omitted):
-{
-  "user": {"id": null, "name": null, "email": null},
-  "accounts": [{"account_id": "", "bank_name": "", "account_type": "savings|current|salary",
-                "currency": "", "opening_balance": 0, "closing_balance": 0,
-                "statement_period_start": "YYYY-MM-DD", "statement_period_end": "YYYY-MM-DD"}],
-  "transactions": [{"transaction_id": "", "account_id": "", "date": "YYYY-MM-DD",
-                     "description": "", "amount": 0, "type": "credit|debit", "category": ""}],
-  "loans": [{"loan_id": "", "lender": "", "loan_type": "home|personal|auto|education|other",
-             "principal": 0, "outstanding_balance": 0, "interest_rate": 0, "emi": 0,
-             "tenure_remaining_months": 0}],
-  "credit_cards": [{"card_id": "", "issuer": "", "credit_limit": 0, "outstanding_balance": 0,
-                     "minimum_due": 0, "due_date": "YYYY-MM-DD", "interest_rate": 0}],
-  "summary": {"total_monthly_income": 0, "total_monthly_expenses": 0, "total_debt": 0,
-              "total_savings": 0, "net_worth_estimate": 0, "savings_rate_percent": 0},
-  "recommendations": []
-}
-
-The document_type hint tells you what kind of document this is, which sections are
-most likely to be populated (e.g. salary_slip -> summary.total_monthly_income and
-possibly one transaction; bank_statement -> accounts + transactions; credit_card ->
-credit_cards; loan -> loans). Do not force-populate sections irrelevant to the
-document type."""
 
 
 class OpenRouterLLMProvider(LLMProvider):
@@ -79,7 +50,7 @@ class OpenRouterLLMProvider(LLMProvider):
                 model=self._model,
                 max_tokens=4096,
                 messages=[
-                    {"role": "system", "content": _EXTRACTION_SYSTEM_PROMPT},
+                    {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
                     {"role": "user", "content": user_message},
                 ],
             )
