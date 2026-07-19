@@ -8,4 +8,18 @@ python-multipart>=0.0.6
 python-dotenv>=1.0.0
 email-validator>=2.0.0
 pytest>=7.0.0
+pytest-asyncio>=0.23.0
 httpx>=0.24.0
+
+# --- Milestone 3: Universal Financial Extractor ---
+pymupdf>=1.24.0          # digital PDF text extraction (fitz)
+opencv-python-headless>=4.9.0   # OCR preprocessing (headless: no GUI deps on server)
+pytesseract>=0.3.10      # OCR (requires system package: tesseract-ocr)
+numpy>=1.26.0
+pandas>=2.2.0            # CSV/Excel parsing
+openpyxl>=3.1.0           # .xlsx engine for pandas
+Pillow>=10.0.0
+anthropic>=0.34.0         # Claude LLM provider (app/services/llm/claude.py only)
+
+# NOTE: pytesseract requires the `tesseract-ocr` system binary. This is not
+# installable via pip. On Debian/Ubuntu hosts: `apt-get install tesseract-ocr`.

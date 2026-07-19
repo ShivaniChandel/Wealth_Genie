@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, status, Header, UploadFile, File, Form
+from fastapi import FastAPI, Depends, HTTPException, status, Header, UploadFile, File, Form, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
@@ -13,7 +13,12 @@ from app.schemas import (
     ErrorResponse,
     UploadResponse
 )
+from app.schemas_ext.analysis import AnalysisJobStatusResponse, FinancialProfileResponse
 from app.auth import get_current_user_id, verify_jwt
+from app.repositories.analysis_jobs_repository import AnalysisJobsRepository
+from app.repositories.documents_repository import DocumentsRepository
+from app.repositories.financial_profiles_repository import FinancialProfilesRepository
+from app.pipeline.analysis_pipeline import run_analysis_pipeline
 
 app = FastAPI(title="FinPilot AI - Wealth Genie API", version="1.0.0")
 
@@ -93,7 +98,7 @@ def logout_user(user_id: UUID = Depends(get_current_user_id)):
 @app.post(
     "/api/v1/documents/upload",
     response_model=UploadResponse,
-    status_code=200,
+    status_code=202,
     responses={
         400: {"model": ErrorResponse},
         401: {"model": ErrorResponse},
@@ -101,6 +106,7 @@ def logout_user(user_id: UUID = Depends(get_current_user_id)):
     }
 )
 async def upload_document(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     document_type: str = Form(...),
     user_id: UUID = Depends(get_current_user_id)
@@ -177,7 +183,73 @@ async def upload_document(
             detail=f"Failed to create document record in database: {str(e)}"
         )
 
+    # 6. Milestone 3: create the analysis_jobs row and enqueue the background
+    #    extraction pipeline, per 13_ASYNC_PROCESSING.md.
+    jobs_repo = AnalysisJobsRepository(supabase_client)
+    try:
+        analysis_job_id = jobs_repo.create(document_id=document_id, user_id=user_id)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create analysis job: {str(e)}"
+        )
+
+    background_tasks.add_task(
+        run_analysis_pipeline,
+        supabase_client,
+        document_id,
+        user_id,
+        analysis_job_id,
+        document_type,
+        file.filename,
+        storage_path,
+    )
+
     return UploadResponse(
         document_id=document_id,
-        status="uploaded"
+        analysis_job_id=analysis_job_id,
+        status="queued"
+    )
+
+
+# ----------------- ANALYSIS ROUTERS (Milestone 3) -----------------
+
+@app.get(
+    "/api/v1/analysis/status/{job_id}",
+    response_model=AnalysisJobStatusResponse,
+    responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}}
+)
+def get_analysis_status(job_id: UUID, user_id: UUID = Depends(get_current_user_id)):
+    jobs_repo = AnalysisJobsRepository(supabase_client)
+    job = jobs_repo.get_by_id(job_id=job_id, user_id=user_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analysis job not found")
+
+    return AnalysisJobStatusResponse(
+        job_id=job["id"],
+        document_id=job["document_id"],
+        status=job["status"],
+        started_at=job.get("started_at"),
+        completed_at=job.get("completed_at"),
+        error_message=job.get("error_message"),
+        report_id=job.get("report_id"),
+    )
+
+
+@app.get(
+    "/api/v1/analysis/{financial_profile_id}",
+    response_model=FinancialProfileResponse,
+    responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}}
+)
+def get_financial_profile(financial_profile_id: UUID, user_id: UUID = Depends(get_current_user_id)):
+    profiles_repo = FinancialProfilesRepository(supabase_client)
+    profile = profiles_repo.get_by_id(profile_id=financial_profile_id, user_id=user_id)
+    if profile is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Financial profile not found")
+
+    return FinancialProfileResponse(
+        id=profile["id"],
+        document_id=profile["document_id"],
+        created_at=profile["created_at"],
+        profile_json=profile["profile_json"],
     )
