@@ -5,10 +5,11 @@ Background worker invoked via FastAPI BackgroundTasks after upload, per
 13_ASYNC_PROCESSING.md. Milestone 3 scope: steps 1-3 of that document
 (status transitions + Universal Extractor + financial_profiles persistence).
 
-Steps 4-7 (Debt/Savings/Budget agents + AI CFO synthesis) are explicitly out
-of scope for this milestone and are NOT stubbed here — analysis_jobs.status
-transitions straight to 'completed' once the financial profile is persisted,
-with report_id left null until those agents exist.
+Milestone 4: added Debt Agent (deterministic debt analysis), persisted to
+recommendations. Savings Agent, Budget Agent, and AI CFO synthesis remain
+out of scope and are NOT stubbed here — analysis_jobs.status transitions to
+'completed' once the debt analysis is persisted, with report_id left null
+until AI CFO exists.
 """
 
 from __future__ import annotations
@@ -21,6 +22,8 @@ from supabase import Client
 from app.repositories.analysis_jobs_repository import AnalysisJobsRepository
 from app.repositories.documents_repository import DocumentsRepository
 from app.repositories.financial_profiles_repository import FinancialProfilesRepository
+from app.repositories.recommendations_repository import RecommendationsRepository
+from app.services.agents.debt_agent import DebtAgent
 from app.services.extraction.enums import (
     ExtractionError,
     UnsupportedDocumentError,
@@ -43,6 +46,7 @@ async def run_analysis_pipeline(
     documents_repo = DocumentsRepository(supabase_client)
     jobs_repo = AnalysisJobsRepository(supabase_client)
     profiles_repo = FinancialProfilesRepository(supabase_client)
+    recommendations_repo = RecommendationsRepository(supabase_client)
 
     jobs_repo.mark_running(job_id)
     documents_repo.update_status(document_id, "processing")
@@ -60,15 +64,26 @@ async def run_analysis_pipeline(
             document_type=document_type,
         )
 
-        profiles_repo.create(
+        financial_profile_id = profiles_repo.create(
             user_id=user_id,
             document_id=document_id,
             profile=outcome.profile,
         )
 
+        # Milestone 4: deterministic debt analysis. Reads only the just-
+        # persisted profile's in-memory copy (outcome.profile) — no re-fetch
+        # needed since it's the same object.
+        debt_analysis = DebtAgent(outcome.profile).analyze()
+        recommendations_repo.create(
+            user_id=user_id,
+            financial_profile_id=financial_profile_id,
+            agent="debt_agent",
+            content=debt_analysis,
+        )
+
         documents_repo.update_status(document_id, "completed")
 
-        # report_id intentionally omitted until later milestones.
+        # report_id intentionally omitted until AI CFO milestone.
         jobs_repo.mark_completed(job_id)
 
     except (
