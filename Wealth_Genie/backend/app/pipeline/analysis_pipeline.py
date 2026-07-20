@@ -24,6 +24,7 @@ from app.repositories.documents_repository import DocumentsRepository
 from app.repositories.financial_profiles_repository import FinancialProfilesRepository
 from app.repositories.recommendations_repository import RecommendationsRepository
 from app.services.agents.debt_agent import DebtAgent
+from app.services.agents.savings_agent import SavingsAgent
 from app.services.extraction.enums import (
     ExtractionError,
     UnsupportedDocumentError,
@@ -79,6 +80,14 @@ async def run_analysis_pipeline(
             financial_profile_id=financial_profile_id,
             agent="debt_agent",
             content=debt_analysis,
+        )
+
+        savings_analysis = SavingsAgent(outcome.profile).analyze()
+        recommendations_repo.create(
+            user_id=user_id,
+            financial_profile_id=financial_profile_id,
+            agent="savings_agent",
+            content=savings_analysis,
         )
 
         documents_repo.update_status(document_id, "completed")

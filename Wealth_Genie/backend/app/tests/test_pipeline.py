@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 from uuid import uuid4
 
 import pytest
@@ -17,6 +17,7 @@ async def test_pipeline_marks_completed_on_success():
          patch("app.pipeline.analysis_pipeline.FinancialProfilesRepository") as MockProfilesRepo, \
          patch("app.pipeline.analysis_pipeline.RecommendationsRepository") as MockRecsRepo, \
          patch("app.pipeline.analysis_pipeline.DebtAgent") as MockDebtAgent, \
+         patch("app.pipeline.analysis_pipeline.SavingsAgent") as MockSavingsAgent, \
          patch("app.pipeline.analysis_pipeline.get_llm_provider") as mock_get_llm, \
          patch("app.pipeline.analysis_pipeline.UniversalExtractor") as MockExtractor:
 
@@ -35,6 +36,8 @@ async def test_pipeline_marks_completed_on_success():
 
         fake_debt_result = MagicMock()
         MockDebtAgent.return_value.analyze.return_value = fake_debt_result
+        fake_savings_result = MagicMock()
+        MockSavingsAgent.return_value.analyze.return_value = fake_savings_result
 
         await run_analysis_pipeline(
             supabase_client=fake_supabase,
@@ -53,12 +56,22 @@ async def test_pipeline_marks_completed_on_success():
         # Milestone 4 assertions
         MockDebtAgent.assert_called_once_with(fake_outcome.profile)
         MockDebtAgent.return_value.analyze.assert_called_once()
-        recs_repo.create.assert_called_once_with(
-            user_id=user_id,
-            financial_profile_id=fake_profile_id,
-            agent="debt_agent",
-            content=fake_debt_result,
-        )
+        MockSavingsAgent.assert_called_once_with(fake_outcome.profile)
+        MockSavingsAgent.return_value.analyze.assert_called_once()
+        assert recs_repo.create.call_args_list == [
+            call(
+                user_id=user_id,
+                financial_profile_id=fake_profile_id,
+                agent="debt_agent",
+                content=fake_debt_result,
+            ),
+            call(
+                user_id=user_id,
+                financial_profile_id=fake_profile_id,
+                agent="savings_agent",
+                content=fake_savings_result,
+            ),
+        ]
 
         docs_repo.update_status.assert_any_call(document_id, "completed")
         jobs_repo.mark_completed.assert_called_once_with(job_id)
