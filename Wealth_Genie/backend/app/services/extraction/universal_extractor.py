@@ -5,8 +5,9 @@ Pure orchestrator (Service Layer). Depends only on interfaces/injected
 collaborators — never imports Supabase, FastAPI, or a concrete AI SDK
 directly. This is what makes it independently testable and provider-agnostic.
 """
-from __future__ import annotations
 
+from __future__ import annotations
+import json
 from dataclasses import dataclass
 
 from app.schemas_ext.financial import UniversalFinancialProfile
@@ -52,6 +53,9 @@ class UniversalExtractor:
             normalized_text=normalized_text,
             document_type=document_type,
         )
+        print("=" * 80)
+        print(json.dumps(raw_json, indent=2))
+        print("=" * 80)
         profile = validate_financial_json(raw_json)
 
         return ExtractionOutcome(
