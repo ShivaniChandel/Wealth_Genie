@@ -5,6 +5,7 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from supabase import create_client, Client
 from uuid import UUID, uuid4
+from decimal import Decimal
 import os
 
 from app.config import settings
@@ -13,11 +14,19 @@ from app.schemas import (
     ErrorResponse,
     UploadResponse
 )
-from app.schemas_ext.analysis import AnalysisJobStatusResponse, FinancialProfileResponse
+from app.schemas_ext.analysis import (
+    AnalysisJobStatusResponse,
+    DashboardResponse,
+    FinancialProfileResponse,
+    ReportDetailResponse,
+    ReportListItemResponse,
+    ReportListResponse,
+)
 from app.auth import get_current_user_id, verify_jwt
 from app.repositories.analysis_jobs_repository import AnalysisJobsRepository
 from app.repositories.documents_repository import DocumentsRepository
 from app.repositories.financial_profiles_repository import FinancialProfilesRepository
+from app.repositories.reports_repository import ReportsRepository
 from app.pipeline.analysis_pipeline import run_analysis_pipeline
 
 app = FastAPI(title="FinPilot AI - Wealth Genie API", version="1.0.0")
@@ -252,4 +261,87 @@ def get_financial_profile(financial_profile_id: UUID, user_id: UUID = Depends(ge
         document_id=profile["document_id"],
         created_at=profile["created_at"],
         profile_json=profile["profile_json"],
+    )
+
+
+# ----------------- REPORT ROUTERS -----------------
+
+@app.get(
+    "/api/v1/reports",
+    response_model=ReportListResponse,
+    responses={401: {"model": ErrorResponse}}
+)
+def list_reports(user_id: UUID = Depends(get_current_user_id)):
+    reports_repo = ReportsRepository(supabase_client)
+    reports = reports_repo.list_by_user_id(user_id=user_id)
+    return ReportListResponse(
+        reports=[
+            ReportListItemResponse(
+                id=report["id"],
+                financial_profile_id=report["financial_profile_id"],
+                created_at=report["created_at"],
+            )
+            for report in reports
+        ]
+    )
+
+
+@app.get(
+    "/api/v1/reports/{report_id}",
+    response_model=ReportDetailResponse,
+    responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}}
+)
+def get_report(report_id: UUID, user_id: UUID = Depends(get_current_user_id)):
+    reports_repo = ReportsRepository(supabase_client)
+    report = reports_repo.get_by_id(report_id=report_id, user_id=user_id)
+    if report is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
+
+    return ReportDetailResponse(
+        id=report["id"],
+        user_id=report["user_id"],
+        financial_profile_id=report["financial_profile_id"],
+        created_at=report["created_at"],
+        content=report["content"],
+    )
+
+
+# ----------------- DASHBOARD ROUTERS -----------------
+
+@app.get(
+    "/api/v1/dashboard",
+    response_model=DashboardResponse,
+    responses={401: {"model": ErrorResponse}}
+)
+def get_dashboard(user_id: UUID = Depends(get_current_user_id)):
+    documents_repo = DocumentsRepository(supabase_client)
+    profiles_repo = FinancialProfilesRepository(supabase_client)
+    reports_repo = ReportsRepository(supabase_client)
+
+    documents_processed = documents_repo.count_completed_by_user_id(user_id=user_id)
+    document = documents_repo.get_latest_completed_by_user_id(user_id=user_id)
+    if document is None:
+        return DashboardResponse(user_id=user_id, documents_processed=documents_processed)
+
+    profile = profiles_repo.get_by_document_id(
+        document_id=UUID(document["id"]), user_id=user_id
+    )
+    if profile is None:
+        return DashboardResponse(user_id=user_id, documents_processed=documents_processed)
+
+    summary = profile.get("profile_json", {}).get("summary", {})
+    report = reports_repo.get_by_financial_profile_id(
+        financial_profile_id=UUID(profile["id"]), user_id=user_id
+    )
+    return DashboardResponse(
+        user_id=user_id,
+        total_monthly_income=summary.get("total_monthly_income") or Decimal("0"),
+        total_monthly_expenses=summary.get("total_monthly_expenses") or Decimal("0"),
+        total_debt=summary.get("total_debt") or Decimal("0"),
+        total_savings=summary.get("total_savings") or Decimal("0"),
+        savings_rate_percent=summary.get("savings_rate_percent") or Decimal("0"),
+        net_worth_estimate=summary.get("net_worth_estimate") or Decimal("0"),
+        latest_report_id=report["id"] if report is not None else None,
+        documents_processed=documents_processed,
+        last_updated=profile["created_at"],
     )

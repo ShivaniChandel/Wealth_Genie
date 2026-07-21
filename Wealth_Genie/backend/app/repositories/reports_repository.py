@@ -48,6 +48,20 @@ class ReportsRepository:
         )
         return result.data[0] if result.data else None
 
+    def get_by_financial_profile_id(
+        self, financial_profile_id: UUID, user_id: UUID
+    ) -> dict | None:
+        result = (
+            self._client.table("reports")
+            .select("*")
+            .eq("financial_profile_id", str(financial_profile_id))
+            .eq("user_id", str(user_id))
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        return result.data[0] if result.data else None
+
     def list_by_user_id(self, user_id: UUID) -> list[dict]:
         result = (
             self._client.table("reports")

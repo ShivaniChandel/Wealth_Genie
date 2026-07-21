@@ -37,3 +37,14 @@ class FinancialProfilesRepository:
             .execute()
         )
         return result.data[0] if result.data else None
+
+    def get_by_document_id(self, document_id: UUID, user_id: UUID) -> dict | None:
+        result = (
+            self._client.table("financial_profiles")
+            .select("*")
+            .eq("document_id", str(document_id))
+            .eq("user_id", str(user_id))
+            .limit(1)
+            .execute()
+        )
+        return result.data[0] if result.data else None
