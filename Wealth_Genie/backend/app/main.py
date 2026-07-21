@@ -12,7 +12,9 @@ from app.config import settings
 from app.schemas import (
     TokenVerificationResponse,
     ErrorResponse,
-    UploadResponse
+    UploadResponse,
+    ChatRequest,
+    ChatResponse,
 )
 from app.schemas_ext.analysis import (
     AnalysisJobStatusResponse,
@@ -28,6 +30,7 @@ from app.repositories.documents_repository import DocumentsRepository
 from app.repositories.financial_profiles_repository import FinancialProfilesRepository
 from app.repositories.reports_repository import ReportsRepository
 from app.pipeline.analysis_pipeline import run_analysis_pipeline
+from app.services.llm.factory import get_llm_provider
 
 app = FastAPI(title="FinPilot AI - Wealth Genie API", version="1.0.0")
 
@@ -345,3 +348,29 @@ def get_dashboard(user_id: UUID = Depends(get_current_user_id)):
         documents_processed=documents_processed,
         last_updated=profile["created_at"],
     )
+
+
+# ----------------- CHAT ROUTERS -----------------
+
+@app.post(
+    "/api/v1/chat",
+    response_model=ChatResponse,
+    responses={400: {"model": ErrorResponse}, 401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}}
+)
+async def chat(request: ChatRequest, user_id: UUID = Depends(get_current_user_id)):
+    profiles_repo = FinancialProfilesRepository(supabase_client)
+    reports_repo = ReportsRepository(supabase_client)
+    profile = profiles_repo.get_latest_by_user_id(user_id=user_id)
+    if profile is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Financial profile not found")
+
+    reports = reports_repo.list_by_user_id(user_id=user_id)
+    report = reports[0] if reports else None
+    provider = get_llm_provider()
+    reply = await provider.answer_financial_question(
+        message=request.message,
+        financial_profile=profile["profile_json"],
+        report=report["content"] if report is not None else None,
+        conversation_history=[message.model_dump() for message in request.conversation_history],
+    )
+    return ChatResponse(reply=reply, financial_profile_id=profile["id"])

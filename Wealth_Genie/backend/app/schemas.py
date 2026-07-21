@@ -1,6 +1,6 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from uuid import UUID
-from typing import Optional
+from typing import List, Literal, Optional
 
 
 class ErrorResponse(BaseModel):
@@ -26,3 +26,18 @@ class UploadResponse(BaseModel):
     document_id: UUID
     analysis_job_id: UUID
     status: str
+
+
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class ChatRequest(BaseModel):
+    message: str = Field(min_length=1)
+    conversation_history: List[ChatMessage] = Field(default_factory=list)
+
+
+class ChatResponse(BaseModel):
+    reply: str
+    financial_profile_id: UUID

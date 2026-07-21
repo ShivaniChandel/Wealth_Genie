@@ -19,7 +19,7 @@ import openai
 
 from app.config import settings
 from app.services.llm.base import LLMProvider, LLMProviderError
-from app.services.llm.prompts import EXTRACTION_SYSTEM_PROMPT
+from app.services.llm.prompts import EXTRACTION_SYSTEM_PROMPT, FINANCIAL_CHAT_SYSTEM_PROMPT
 
 _OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
@@ -83,6 +83,60 @@ class OpenRouterLLMProvider(LLMProvider):
             raise LLMProviderError("OpenRouter returned an empty response.")
 
         return self._parse_json(raw_text)
+
+    async def answer_financial_question(
+        self,
+        message: str,
+        financial_profile: dict,
+        report: dict | None,
+        conversation_history: list[dict],
+    ) -> str:
+        context = json.dumps(
+            {"financial_profile": financial_profile, "latest_report": report},
+            default=str,
+        )
+        messages = [{"role": "system", "content": FINANCIAL_CHAT_SYSTEM_PROMPT}]
+        messages.extend(conversation_history)
+        messages.append(
+            {
+                "role": "user",
+                "content": f"Financial context:\n{context}\n\nQuestion: {message}",
+            }
+        )
+
+        try:
+            response = await self._client.chat.completions.create(
+                model=self._model,
+                max_tokens=1024,
+                messages=messages,
+            )
+        except openai.AuthenticationError as exc:
+            raise LLMProviderError(
+                f"OpenRouter authentication failed (invalid or missing OPENROUTER_API_KEY): {exc}"
+            ) from exc
+        except openai.PermissionDeniedError as exc:
+            raise LLMProviderError(
+                f"OpenRouter denied access to model '{self._model}': {exc}"
+            ) from exc
+        except openai.RateLimitError as exc:
+            raise LLMProviderError(f"OpenRouter rate limit exceeded: {exc}") from exc
+        except openai.APITimeoutError as exc:
+            raise LLMProviderError(f"OpenRouter request timed out: {exc}") from exc
+        except openai.APIConnectionError as exc:
+            raise LLMProviderError(f"Could not reach OpenRouter (network error): {exc}") from exc
+        except openai.APIStatusError as exc:
+            raise LLMProviderError(
+                f"OpenRouter returned an error (status {exc.status_code}): {exc}"
+            ) from exc
+        except openai.APIError as exc:
+            raise LLMProviderError(f"OpenRouter request failed: {exc}") from exc
+
+        choice = response.choices[0] if response.choices else None
+        reply = (choice.message.content if choice and choice.message else "") or ""
+        reply = reply.strip()
+        if not reply:
+            raise LLMProviderError("OpenRouter returned an empty response.")
+        return reply
 
     @staticmethod
     def _parse_json(raw_text: str) -> dict:

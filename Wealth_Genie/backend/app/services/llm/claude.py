@@ -5,7 +5,7 @@ import re
 
 from app.config import settings
 from app.services.llm.base import LLMProvider, LLMProviderError
-from app.services.llm.prompts import EXTRACTION_SYSTEM_PROMPT
+from app.services.llm.prompts import EXTRACTION_SYSTEM_PROMPT, FINANCIAL_CHAT_SYSTEM_PROMPT
 
 
 class ClaudeLLMProvider(LLMProvider):
@@ -36,6 +36,37 @@ class ClaudeLLMProvider(LLMProvider):
         ).strip()
 
         return self._parse_json(raw_text)
+
+    async def answer_financial_question(
+        self,
+        message: str,
+        financial_profile: dict,
+        report: dict | None,
+        conversation_history: list[dict],
+    ) -> str:
+        context = json.dumps(
+            {"financial_profile": financial_profile, "latest_report": report},
+            default=str,
+        )
+        messages = list(conversation_history)
+        messages.append(
+            {
+                "role": "user",
+                "content": f"Financial context:\n{context}\n\nQuestion: {message}",
+            }
+        )
+        response = await self._client.messages.create(
+            model=self._model,
+            max_tokens=1024,
+            system=FINANCIAL_CHAT_SYSTEM_PROMPT,
+            messages=messages,
+        )
+        reply = "".join(
+            block.text for block in response.content if getattr(block, "type", None) == "text"
+        ).strip()
+        if not reply:
+            raise LLMProviderError("Claude returned an empty response.")
+        return reply
 
     @staticmethod
     def _parse_json(raw_text: str) -> dict:

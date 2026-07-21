@@ -38,6 +38,17 @@ class FinancialProfilesRepository:
         )
         return result.data[0] if result.data else None
 
+    def get_latest_by_user_id(self, user_id: UUID) -> dict | None:
+        result = (
+            self._client.table("financial_profiles")
+            .select("*")
+            .eq("user_id", str(user_id))
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        return result.data[0] if result.data else None
+
     def get_by_document_id(self, document_id: UUID, user_id: UUID) -> dict | None:
         result = (
             self._client.table("financial_profiles")

@@ -30,3 +30,13 @@ class LLMProvider(ABC):
             LLMProviderError: if the provider cannot produce parseable JSON.
         """
         raise NotImplementedError
+
+    async def answer_financial_question(
+        self,
+        message: str,
+        financial_profile: dict,
+        report: dict | None,
+        conversation_history: list[dict],
+    ) -> str:
+        """Answer a question using persisted financial profile and report data."""
+        raise NotImplementedError
