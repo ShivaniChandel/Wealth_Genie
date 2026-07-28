@@ -153,6 +153,7 @@ export default function UploadPage() {
       const data = await response.json();
       setUploadProgress(100);
       setSuccessData(data);
+      router.push(`/processing/${encodeURIComponent(data.analysis_job_id)}`);
     } catch (err: any) {
       console.error("Upload error:", err);
       setErrorMsg(err.message || "An unexpected error occurred during document upload.");
