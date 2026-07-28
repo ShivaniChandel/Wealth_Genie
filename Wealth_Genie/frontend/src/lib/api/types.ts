@@ -16,11 +16,11 @@
  *   - backend/app/schemas_ext/ai_cfo_analysis.py
  *
  * Convention: every `Decimal`-backed field on the backend (money, rates,
- * ratios) is serialized as a JSON *string*, not a number — confirmed by
- * `backend/app/tests/test_dashboard.py` (e.g. `"total_monthly_income": "10000"`)
- * and the evaluation fixtures under `backend/evaluation/**/expected.json`.
+ * ratios) is serialized as a JSON string, not a number — confirmed by
+ * backend/app/tests/test_dashboard.py (e.g. `"total_monthly_income": "10000"`)
+ * and the evaluation fixtures under backend/evaluation/** expected.json.
  * This preserves exact decimal precision across the wire and must not be
- * parsed with `Number()` before doing further arithmetic — treat as display
+ * parsed with Number before doing further arithmetic — treat as display
  * strings, or parse with a decimal-safe library if math is ever needed
  * client-side.
  */

@@ -1,31 +1,49 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-
-interface TokenVerificationData {
-  user_id: string;
-  email: string;
-  aud: string;
-  role: string;
-}
+import { ApiError, apiFetch } from "@/lib/api/client";
+import type { DashboardResponse } from "@/lib/api/types";
 
 export default function DashboardPage() {
   const router = useRouter();
   const [sessionLoading, setSessionLoading] = useState(true);
+  const [dashboardLoading, setDashboardLoading] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
-  
-  // Backend verification state
-  const [verificationLoading, setVerificationLoading] = useState(false);
-  const [verificationResult, setVerificationResult] = useState<TokenVerificationData | null>(null);
-  const [verificationError, setVerificationError] = useState<string | null>(null);
+  const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
+  const [dashboardError, setDashboardError] = useState<string | null>(null);
+
+  const loadDashboard = useCallback(async () => {
+    setDashboardLoading(true);
+    setDashboardError(null);
+
+    try {
+      const data = await apiFetch<DashboardResponse>("/dashboard");
+      setDashboard(data);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        router.push("/login");
+        return;
+      }
+
+      setDashboardError(
+        error instanceof Error ? error.message : "Could not load dashboard data."
+      );
+    } finally {
+      setDashboardLoading(false);
+    }
+  }, [router]);
 
   useEffect(() => {
     const checkSession = async () => {
       try {
-        const { data: { session }, error } = await supabase.auth.getSession();
+        const {
+          data: { session },
+          error,
+        } = await supabase.auth.getSession();
+
         if (error || !session) {
           router.push("/login");
           return;
@@ -33,74 +51,49 @@ export default function DashboardPage() {
 
         setUserEmail(session.user?.email || null);
         setSessionLoading(false);
-
-        // Fetch verification from the backend
-        verifyBackendToken(session.access_token);
-      } catch (err) {
-        console.error("Session check failed:", err);
+        await loadDashboard();
+      } catch (error) {
+        console.error("Session check failed:", error);
         router.push("/login");
       }
     };
 
     checkSession();
 
-    // Setup auth state listener
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === "SIGNED_OUT") {
         router.push("/login");
       } else if (session) {
         setUserEmail(session.user?.email || null);
-        verifyBackendToken(session.access_token);
+        await loadDashboard();
       }
     });
 
     return () => {
       subscription.unsubscribe();
     };
-  }, [router]);
-
-  const verifyBackendToken = async (accessToken: string) => {
-    setVerificationLoading(true);
-    setVerificationError(null);
-    try {
-      const response = await fetch("http://localhost:8000/api/v1/auth/verify-token", {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      });
-
-      if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.detail || "Failed to verify token with backend");
-      }
-
-      const data: TokenVerificationData = await response.json();
-      setVerificationResult(data);
-    } catch (err: any) {
-      console.error("Backend verification error:", err);
-      setVerificationError(err.message || "Could not reach backend API");
-    } finally {
-      setVerificationLoading(false);
-    }
-  };
+  }, [loadDashboard, router]);
 
   const handleLogout = async () => {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session) {
-        await fetch("http://localhost:8000/api/v1/auth/logout", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${session.access_token}`,
-          },
-        }).catch((err) => console.warn("Backend logout notification failed:", err));
-      }
+      await apiFetch<void>("/auth/logout", { method: "POST" }).catch((error) =>
+        console.warn("Backend logout notification failed:", error)
+      );
       await supabase.auth.signOut();
       router.push("/login");
-    } catch (err) {
-      console.error("Logout failed:", err);
+    } catch (error) {
+      console.error("Logout failed:", error);
     }
+  };
+
+  const formatCurrency = (value: string) => `₹${value}`;
+  const formatLastUpdated = (value: string | null) => {
+    if (!value) return "Not available";
+
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
   };
 
   if (sessionLoading) {
@@ -108,19 +101,30 @@ export default function DashboardPage() {
       <div className="min-h-screen bg-[#030712] text-gray-100 flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
           <div className="w-12 h-12 rounded-full border-4 border-emerald-500/20 border-t-emerald-500 animate-spin" />
-          <p className="text-gray-400 text-sm font-medium">Verifying Session...</p>
+          <p className="text-gray-400 text-sm font-medium">Verifying session...</p>
         </div>
       </div>
     );
   }
 
+  const metricCards = dashboard
+    ? [
+        { label: "Net Worth", value: formatCurrency(dashboard.net_worth_estimate) },
+        { label: "Monthly Income", value: formatCurrency(dashboard.total_monthly_income) },
+        { label: "Monthly Expenses", value: formatCurrency(dashboard.total_monthly_expenses) },
+        { label: "Total Savings", value: formatCurrency(dashboard.total_savings) },
+        { label: "Total Debt", value: formatCurrency(dashboard.total_debt) },
+        { label: "Savings Rate", value: `${dashboard.savings_rate_percent}%` },
+        { label: "Documents Processed", value: String(dashboard.documents_processed) },
+        { label: "Last Updated", value: formatLastUpdated(dashboard.last_updated) },
+      ]
+    : [];
+
   return (
     <div className="relative min-h-screen bg-[#030712] text-gray-100 flex flex-col justify-between overflow-hidden">
-      {/* Decorative Blur Backgrounds */}
       <div className="glow-blur-green top-[10%] left-[5%]" />
       <div className="glow-blur-indigo bottom-[20%] right-[10%]" />
 
-      {/* Header */}
       <header className="relative z-10 w-full max-w-7xl mx-auto px-6 py-6 flex justify-between items-center border-b border-white/5">
         <div className="flex items-center gap-2">
           <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-500 to-indigo-600 flex items-center justify-center font-bold text-white shadow-lg">
@@ -131,9 +135,7 @@ export default function DashboardPage() {
           </span>
         </div>
         <div className="flex items-center gap-4">
-          <span className="hidden sm:inline text-sm text-gray-400 font-medium">
-            {userEmail}
-          </span>
+          <span className="hidden sm:inline text-sm text-gray-400 font-medium">{userEmail}</span>
           <button
             onClick={handleLogout}
             className="px-4 py-2 text-sm font-medium bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white rounded-xl border border-white/10 transition-all duration-200"
@@ -143,94 +145,56 @@ export default function DashboardPage() {
         </div>
       </header>
 
-      {/* Main Dashboard Area */}
       <main className="relative z-10 flex-1 w-full max-w-7xl mx-auto px-6 py-12 flex flex-col gap-10">
         <div>
-          <h1 className="text-3xl font-extrabold text-white tracking-tight">
-            Financial Dashboard
-          </h1>
-          <p className="text-gray-400 mt-1">
-            Overview of your financial reports and agent recommendations.
-          </p>
+          <h1 className="text-3xl font-extrabold text-white tracking-tight">Financial Dashboard</h1>
+          <p className="text-gray-400 mt-1">Overview of your latest persisted financial data.</p>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Main Empty State Panel */}
-          <div className="lg:col-span-2 glass-panel p-8 md:p-10 rounded-3xl flex flex-col justify-center items-center text-center min-h-[300px]">
+        {dashboardError ? (
+          <div className="glass-panel p-8 md:p-10 rounded-3xl flex flex-col justify-center items-center text-center min-h-[300px]">
+            <h2 className="text-xl font-bold text-white mb-2">Dashboard unavailable</h2>
+            <p className="text-red-400 text-sm max-w-md mb-6">{dashboardError}</p>
+            <button
+              onClick={loadDashboard}
+              className="px-6 py-3 bg-white/5 hover:bg-white/10 text-white font-semibold rounded-xl border border-white/10 transition-all duration-200"
+            >
+              Try Again
+            </button>
+          </div>
+        ) : dashboardLoading || !dashboard ? (
+          <div className="glass-panel p-8 md:p-10 rounded-3xl flex flex-col justify-center items-center text-center min-h-[300px]">
+            <div className="w-12 h-12 rounded-full border-4 border-emerald-500/20 border-t-emerald-500 animate-spin mb-4" />
+            <p className="text-gray-400 text-sm font-medium">Loading dashboard...</p>
+          </div>
+        ) : dashboard.documents_processed === 0 ? (
+          <div className="glass-panel p-8 md:p-10 rounded-3xl flex flex-col justify-center items-center text-center min-h-[300px]">
             <div className="w-16 h-16 rounded-2xl bg-white/5 flex items-center justify-center text-3xl mb-6">
               📁
             </div>
-            <h3 className="text-xl font-bold text-white mb-2">No documents processed yet</h3>
+            <h2 className="text-xl font-bold text-white mb-2">No documents processed yet</h2>
             <p className="text-gray-400 text-sm max-w-md mb-8 leading-relaxed">
-              Upload bank statements, credit card statements, loan contracts, or salary slips. The Wealth Genie AI agents will analyze them and build your financial profile.
+              Upload a financial document to build your financial dashboard.
             </p>
-            <Link href="/upload" className="px-6 py-3 bg-emerald-500 hover:bg-emerald-600 text-white font-semibold rounded-xl shadow-lg shadow-emerald-500/20 transition-all duration-200">
+            <Link
+              href="/upload"
+              className="px-6 py-3 bg-emerald-500 hover:bg-emerald-600 text-white font-semibold rounded-xl shadow-lg shadow-emerald-500/20 transition-all duration-200"
+            >
               Upload First Document
             </Link>
           </div>
-
-          {/* Backend Connection / Token Validation Panel */}
-          <div className="glass-panel p-8 rounded-3xl flex flex-col justify-between">
-            <div>
-              <h2 className="text-lg font-bold text-white mb-3">Backend Integration</h2>
-              <p className="text-gray-400 text-xs leading-relaxed mb-6">
-                FastAPI JWT verification status. This panel validates that the Next.js client JWT token is successfully validated by the FastAPI middleware using `SUPABASE_JWT_SECRET`.
-              </p>
-
-              <div className="space-y-4">
-                <div className="flex items-center justify-between text-xs p-3 rounded-lg bg-white/5 border border-white/5">
-                  <span className="text-gray-400">Connection State:</span>
-                  {verificationLoading ? (
-                    <span className="text-yellow-400 font-semibold animate-pulse">Verifying...</span>
-                  ) : verificationError ? (
-                    <span className="text-red-400 font-semibold">Offline/Error</span>
-                  ) : (
-                    <span className="text-emerald-400 font-semibold">Active</span>
-                  )}
-                </div>
-
-                {verificationError && (
-                  <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-xs text-red-400">
-                    <strong>Error:</strong> {verificationError}
-                  </div>
-                )}
-
-                {verificationResult && (
-                  <div className="space-y-2 text-xs p-4 rounded-lg bg-white/5 border border-white/5 font-mono">
-                    <div className="text-gray-300 font-bold mb-1 border-b border-white/5 pb-1">Token Claims:</div>
-                    <div className="overflow-x-auto whitespace-nowrap">
-                      <span className="text-gray-400">User ID:</span>{" "}
-                      <span className="text-emerald-400">{verificationResult.user_id}</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-400">Audience:</span>{" "}
-                      <span className="text-indigo-400">{verificationResult.aud}</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-400">Role:</span>{" "}
-                      <span className="text-teal-400">{verificationResult.role}</span>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <button
-              onClick={() => {
-                supabase.auth.getSession().then(({ data: { session } }) => {
-                  if (session) verifyBackendToken(session.access_token);
-                });
-              }}
-              disabled={verificationLoading}
-              className="mt-6 w-full py-3 bg-white/5 hover:bg-white/10 disabled:bg-white/5 text-gray-300 hover:text-white font-medium text-xs rounded-xl border border-white/10 transition-all duration-200"
-            >
-              Force Re-verify Token
-            </button>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+            {metricCards.map((metric) => (
+              <section key={metric.label} className="glass-panel p-6 rounded-2xl">
+                <p className="text-xs font-medium uppercase tracking-wider text-gray-400">{metric.label}</p>
+                <p className="mt-3 text-2xl font-bold text-white break-words">{metric.value}</p>
+              </section>
+            ))}
           </div>
-        </div>
+        )}
       </main>
 
-      {/* Footer */}
       <footer className="relative z-10 w-full max-w-7xl mx-auto px-6 py-8 border-t border-white/5 text-center md:text-left">
         <p className="text-xs text-gray-500">
           © {new Date().getFullYear()} Wealth Genie. All data is encrypted and validated server-side.
